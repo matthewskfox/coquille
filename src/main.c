@@ -1,7 +1,9 @@
+#include <asm-generic/errno-base.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define MAX_ARGS 128 /* including the terminating NULL slot */
@@ -72,8 +74,7 @@ static int shell_parse(struct shell *shell)
     while (token) {
         if (shell->argc + 1 >= MAX_ARGS) {
             fprintf(
-                stderr,
-                "error: too many arguments (maximum %d)\n",
+                stderr, "error: too many arguments (maximum %d)\n",
                 MAX_ARGS -1
             );
             return -1;
@@ -90,10 +91,46 @@ static int shell_parse(struct shell *shell)
 
 static int shell_execute(struct shell *shell)
 {    
-    fprintf(stderr, "exec: %s\n", shell->argv[0]);
+    pid_t pid;
+    int status;
 
-    // TODO: Execute the command stored in shell->argv by forking a child, and
-    // returning its exit status.
+    pid = fork();
+    if (pid == -1) {
+        perror("fork");
+        return -1;
+    }
+
+    if (pid == 0) {
+        execvp(shell->argv[0], shell->argv);
+
+        fprintf(
+            stderr, "%s: %s\n",
+            shell->argv[0], strerror(errno)
+        );
+        _exit(127);
+    }
+
+    for (;;) {
+        if (waitpid(pid, &status, 0) != -1)
+            break;
+
+        if (errno == EINTR)
+            continue;
+
+        perror("waitpid");
+        return -1;
+    }
+
+    if (WIFEXITED(status))
+		return WEXITSTATUS(status);
+
+	if (WIFSIGNALED(status)) {
+		fprintf(
+            stderr, "%s: terminated by signal %d\n",
+            shell->argv[0], WTERMSIG(status)
+        );
+		return 128 + WTERMSIG(status);
+	}
 
     return 0;
 }
